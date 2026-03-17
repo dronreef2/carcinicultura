@@ -9,7 +9,7 @@ Sistema de automação para criação de camarão com monitoramento em tempo rea
 | **Firmware** | ESP32 + Arduino (C++) | 🟡 Módulo 1 |
 | **Backend** | Python/FastAPI + MQTT | 🟡 Módulo 1 |
 | **Banco de Dados** | PostgreSQL + TimescaleDB | 🟡 Módulo 1 |
-| **Dashboard** | HTML/JS + Chart.js | 🟡 Módulo 1 |
+| **Dashboard** | Streamlit + Plotly | 🟢 Pronto |
 | **ML/IA** | Python (scikit-learn, XGBoost) | ⚪ Módulo 4 |
 
 ## 🏗️ Arquitetura
@@ -49,8 +49,15 @@ Sistema de automação para criação de camarão com monitoramento em tempo rea
 │   ├── docker-compose.yml
 │   ├── Dockerfile
 │   └── requirements.txt
-├── dashboard/              # Dashboard web
-│   └── index.html          # SPA com Chart.js
+├── streamlit-dashboard/    # Dashboard Streamlit
+│   ├── app.py              # Aplicação principal
+│   ├── data_simulator.py   # Gerador de dados simulados
+│   ├── pages/              # Páginas do dashboard
+│   │   ├── visao_geral.py
+│   │   ├── detalhes_viveiro.py
+│   │   ├── estudos_producao.py
+│   │   └── alertas_eventos.py
+│   └── requirements.txt
 ├── docs/                   # Documentação
 │   └── smart-shrimp-farm-docs.docx
 ├── schema.sql              # Esquema completo do banco
@@ -79,8 +86,13 @@ docker exec mosquitto mosquitto_pub \
   -m '{"timestamp":1710000000,"pond_id":"P01","temperature":28.5,"device_id":"esp32-sim"}'
 ```
 
-### 3. Acessar o dashboard
-Abra `dashboard/index.html` no navegador.
+### 3. Acessar o Dashboard Streamlit
+```bash
+cd streamlit-dashboard
+pip install -r requirements.txt
+streamlit run app.py
+```
+Acesse http://localhost:8501 no navegador.
 
 ### 4. Carregar firmware no ESP32
 1. Copie `config.example.h` para `config.h`

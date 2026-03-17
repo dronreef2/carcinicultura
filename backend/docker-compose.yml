@@ -1,0 +1,77 @@
+version: "3.8"
+
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  Docker Compose — IoT Camarão Módulo 1                                     ║
+# ║  Serviços: Mosquitto (MQTT), TimescaleDB (PostgreSQL), FastAPI (Backend)   ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+services:
+
+  # ─── Broker MQTT (Mosquitto) ────────────────────────────────────────────────
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: camarao-mqtt
+    restart: unless-stopped
+    ports:
+      - "1883:1883"   # MQTT padrão
+      - "9001:9001"   # WebSocket (para dashboard)
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/password.txt:/mosquitto/config/password.txt:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    networks:
+      - camarao-net
+
+  # ─── Banco de Dados TimescaleDB ────────────────────────────────────────────
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: camarao-db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: camarao_iot
+      POSTGRES_USER: camarao
+      POSTGRES_PASSWORD: camarao_db_senha_segura
+    volumes:
+      - timescale_data:/home/postgres/pgdata/data
+    networks:
+      - camarao-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U camarao -d camarao_iot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Backend FastAPI ────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: camarao-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://camarao:camarao_db_senha_segura@timescaledb:5432/camarao_iot"
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+      MQTT_USER: camarao
+      MQTT_PASSWORD: mqtt_senha_segura
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    networks:
+      - camarao-net
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:
+  timescale_data:
+
+networks:
+  camarao-net:
+    driver: bridge

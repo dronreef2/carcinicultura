@@ -227,6 +227,77 @@
 
     .log-entry-new { color: var(--accent); }
 
+    /* ─── Painel de alertas ─────────────────────────────────────────────── */
+    .alerts-card {
+      background: var(--bg-card);
+      border-radius: 12px;
+      padding: 1.5rem;
+      border: 1px solid var(--border);
+    }
+
+    .alerts-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.8rem;
+    }
+
+    .alerts-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+    }
+
+    .alert-badge {
+      background: rgba(239,68,68,0.15);
+      color: var(--red);
+      border-radius: 9999px;
+      padding: 0.2rem 0.6rem;
+      font-size: 0.75rem;
+      font-weight: 700;
+      display: none;
+    }
+
+    .alerts-list {
+      max-height: 200px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .alert-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.6rem;
+      padding: 0.6rem 0.8rem;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }
+
+    .alert-item.warning {
+      background: rgba(234,179,8,0.1);
+      border-left: 3px solid var(--yellow);
+    }
+
+    .alert-item.critical {
+      background: rgba(239,68,68,0.1);
+      border-left: 3px solid var(--red);
+    }
+
+    .alert-icon { font-size: 1rem; flex-shrink: 0; margin-top: 0.05rem; }
+
+    .alert-msg { flex: 1; color: var(--text-primary); }
+
+    .alert-time { color: var(--text-secondary); font-size: 0.72rem; white-space: nowrap; }
+
+    .alerts-empty {
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+      padding: 1rem 0;
+    }
+
     /* ─── Faixas de referência ──────────────────────────────────────────── */
     .ranges-card {
       background: var(--bg-card);
@@ -354,6 +425,17 @@
       <div class="log-title">Log de Eventos</div>
       <div id="logEntries" class="log-entries">
         <div>Aguardando conexão com o servidor...</div>
+      </div>
+    </section>
+
+    <!-- Painel de alertas -->
+    <section class="alerts-card">
+      <div class="alerts-header">
+        <span class="alerts-title">⚠️ Alertas de Temperatura</span>
+        <span id="alertBadge" class="alert-badge">0</span>
+      </div>
+      <div id="alertsList" class="alerts-list">
+        <div class="alerts-empty">Nenhum alerta nas últimas 24h ✅</div>
       </div>
     </section>
 
@@ -659,6 +741,12 @@
               true
             );
 
+            // Exibe alerta inline se recebido via WebSocket
+            if (dados.alerta) {
+              adicionarAlertaInline(dados.alerta);
+              adicionarLog(`⚠️ ${dados.alerta.mensagem}`, true);
+            }
+
             // Recarrega estatísticas a cada leitura nova
             carregarEstatisticas();
           }
@@ -690,8 +778,86 @@
         if (resp.ok) {
           const dados = await resp.json();
           atualizarMetricas(dados);
+        } else {
+          adicionarLog(`Erro ao carregar estatísticas: HTTP ${resp.status}`);
         }
-      } catch (_) { /* silencioso */ }
+      } catch (err) {
+        adicionarLog(`Erro ao carregar estatísticas: ${err.message}`);
+      }
+    }
+
+    // ─── Alertas ──────────────────────────────────────────────────────────
+
+    async function carregarAlertas() {
+      try {
+        const resp = await fetch(`${API_BASE}/api/ponds/${viveiroAtual}/alerts?hours=24&limit=20`);
+        if (!resp.ok) return;
+        const alertas = await resp.json();
+        renderizarAlertas(alertas);
+      } catch (err) {
+        adicionarLog(`Erro ao carregar alertas: ${err.message}`);
+      }
+    }
+
+    function renderizarAlertas(alertas) {
+      const lista = document.getElementById('alertsList');
+      const badge = document.getElementById('alertBadge');
+
+      lista.innerHTML = '';
+
+      if (!alertas.length) {
+        lista.innerHTML = '<div class="alerts-empty">Nenhum alerta nas últimas 24h ✅</div>';
+        badge.style.display = 'none';
+        return;
+      }
+
+      const naoReconhecidos = alertas.filter(a => !a.reconhecido).length;
+      if (naoReconhecidos > 0) {
+        badge.textContent = naoReconhecidos;
+        badge.style.display = 'inline';
+      } else {
+        badge.style.display = 'none';
+      }
+
+      alertas.forEach(a => {
+        const item = document.createElement('div');
+        item.className = `alert-item ${a.severidade}`;
+        const icone = a.severidade === 'critical' ? '🔴' : '🟡';
+        const hora = formatarHora(a.timestamp);
+        item.innerHTML = `
+          <span class="alert-icon">${icone}</span>
+          <span class="alert-msg">${a.mensagem}</span>
+          <span class="alert-time">${hora}</span>`;
+        lista.appendChild(item);
+      });
+    }
+
+    function adicionarAlertaInline(alerta) {
+      const lista = document.getElementById('alertsList');
+      const badge = document.getElementById('alertBadge');
+
+      // Remove placeholder se presente
+      const empty = lista.querySelector('.alerts-empty');
+      if (empty) lista.removeChild(empty);
+
+      const item = document.createElement('div');
+      item.className = `alert-item ${alerta.severidade}`;
+      const icone = alerta.severidade === 'critical' ? '🔴' : '🟡';
+      item.innerHTML = `
+        <span class="alert-icon">${icone}</span>
+        <span class="alert-msg">${alerta.mensagem}</span>
+        <span class="alert-time">${formatarHora(new Date().toISOString())}</span>`;
+      lista.insertBefore(item, lista.firstChild);
+
+      // Atualiza badge
+      const atual = parseInt(badge.textContent || '0', 10);
+      badge.textContent = atual + 1;
+      badge.style.display = 'inline';
+
+      // Mantém no máximo 20 alertas visíveis
+      while (lista.children.length > 20) {
+        lista.removeChild(lista.lastChild);
+      }
     }
 
     // ─── Seletor de viveiro ───────────────────────────────────────────────
@@ -701,17 +867,49 @@
       adicionarLog(`Viveiro alterado para: ${viveiroAtual}`, true);
       conectarWebSocket();
       carregarDados(horasVisiveis);
+      carregarAlertas();
     });
+
+    /** Carrega a lista de viveiros do backend e preenche o seletor */
+    async function carregarViveiros() {
+      try {
+        const resp = await fetch(`${API_BASE}/api/ponds`);
+        if (!resp.ok) return;
+        const viveiros = await resp.json();
+        if (!viveiros.length) return;
+
+        const sel = document.getElementById('pondSelector');
+        sel.innerHTML = '';
+        viveiros.forEach((v, i) => {
+          const opt = document.createElement('option');
+          opt.value = v.id;
+          opt.textContent = v.name;
+          if (i === 0) opt.selected = true;
+          sel.appendChild(opt);
+        });
+
+        // Define o viveiro ativo com o primeiro da lista
+        viveiroAtual = viveiros[0].id;
+        adicionarLog(`${viveiros.length} viveiro(s) carregado(s) da API`);
+      } catch (err) {
+        adicionarLog(`Erro ao carregar viveiros: ${err.message}`);
+        // Mantém as opções estáticas do HTML em caso de falha
+      }
+    }
 
     // ─── Inicialização ────────────────────────────────────────────────────
 
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
       inicializarGrafico();
+      await carregarViveiros();
       carregarDados(24);
       conectarWebSocket();
+      carregarAlertas();
 
       // Atualiza dados periodicamente (backup caso o WS caia)
       setInterval(() => carregarDados(), 120000);
+      // Atualiza alertas a cada 2 minutos
+      setInterval(carregarAlertas, 120000);
     });
   </script>
 </body>

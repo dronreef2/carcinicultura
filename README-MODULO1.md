@@ -143,9 +143,20 @@ Edite `config.h` com os dados da sua rede e servidor:
 ```bash
 cd backend
 
+# Copie variáveis de ambiente base
+cp .env.example .env
+
 # Gera o arquivo de senhas (substitua 'mqtt_senha_segura' pela sua senha)
 docker run --rm -v $(pwd)/mosquitto:/mosquitto/config eclipse-mosquitto:2 \
   mosquitto_passwd -b /mosquitto/config/password.txt camarao mqtt_senha_segura
+```
+
+No Windows PowerShell, use:
+
+```powershell
+cd backend
+Copy-Item .env.example .env
+docker run --rm -v ${PWD}/mosquitto:/mosquitto/config eclipse-mosquitto:2 mosquitto_passwd -b /mosquitto/config/password.txt camarao mqtt_senha_segura
 ```
 
 ### 3. Subir os serviços
@@ -213,14 +224,15 @@ mosquitto_pub \
 
 ### Teste 3: Abrir o Dashboard
 
-Abra o arquivo `dashboard/index.html` no navegador, ou sirva-o via HTTP:
+Suba o dashboard Streamlit:
 
 ```bash
-cd dashboard
-python3 -m http.server 3000
+cd streamlit-dashboard
+pip install -r requirements.txt
+streamlit run app.py
 ```
 
-Acesse: http://localhost:3000
+Acesse: http://localhost:8501
 
 ---
 
@@ -230,8 +242,10 @@ Acesse: http://localhost:3000
 |---|---|---|
 | GET | `/api/health` | Verifica status do backend |
 | GET | `/api/ponds` | Lista todos os viveiros |
-| GET | `/api/ponds/{id}/readings?hours=24` | Leituras históricas (1-168h) |
+| GET | `/api/ponds/{id}/readings?hours=24&limit=1000` | Leituras históricas (1-168h) com paginação por limite |
 | GET | `/api/ponds/{id}/latest` | Última leitura + estatísticas 24h |
+| GET | `/api/ponds/{id}/alerts?limit=50` | Alertas do viveiro |
+| PATCH | `/api/ponds/{id}/alerts/{alert_id}/acknowledge` | Reconhece alerta |
 | WS | `/ws/ponds/{id}` | Stream de leituras em tempo real |
 
 ### Exemplo de resposta — `/api/ponds/pond-01/latest`
@@ -265,8 +279,8 @@ Acesse: http://localhost:3000
 
 ### Dashboard não mostra dados
 - Verifique se o backend está rodando: `curl http://localhost:8000/api/health`
-- Confira o console do navegador (F12) para erros de WebSocket
-- Verifique se a porta 8000 está acessível
+- Verifique se o Streamlit está ativo: `streamlit run app.py` em `streamlit-dashboard/`
+- Verifique se as portas 8000 (API) e 8501 (dashboard) estão acessíveis
 
 ### Sensor DS18B20 retorna -127°C
 - Verifique a fiação (VCC, DATA, GND)
@@ -276,6 +290,7 @@ Acesse: http://localhost:3000
 
 ### TimescaleDB não inicia
 - Verifique se a porta 5432 não está em uso: `lsof -i :5432`
+- No Windows: `netstat -ano | findstr :5432`
 - Limpe os volumes e recrie: `docker compose down -v && docker compose up -d`
 
 ---
@@ -283,7 +298,7 @@ Acesse: http://localhost:3000
 ## Estrutura do Projeto
 
 ```
-modulo1/
+carcinicultura/
 ├── firmware/
 │   └── esp32-sensor/
 │       ├── main.ino              # Firmware do ESP32
@@ -293,6 +308,7 @@ modulo1/
 │   ├── docker-compose.yml        # Orquestração dos serviços
 │   ├── Dockerfile                # Imagem do backend
 │   ├── requirements.txt          # Dependências Python
+│   ├── .env.example              # Variáveis de ambiente de referência
 │   ├── mosquitto/
 │   │   ├── mosquitto.conf        # Configuração do broker MQTT
 │   │   └── password.txt          # Senhas MQTT (gerar com mosquitto_passwd)
@@ -300,9 +316,10 @@ modulo1/
 │       ├── main.py               # Aplicação FastAPI + MQTT subscriber
 │       ├── models.py             # Modelos Pydantic
 │       └── database.py           # Conexão TimescaleDB + schema
-├── dashboard/
-│   └── index.html                # Dashboard em tempo real
-└── README.md                     # Este arquivo
+├── streamlit-dashboard/
+│   ├── app.py                    # Dashboard principal
+│   └── pages/                    # Páginas de visão geral, detalhes e alertas
+└── README-MODULO1.md             # Este arquivo
 ```
 
 ---

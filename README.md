@@ -74,16 +74,17 @@ Sistema de automação para criação de camarão com monitoramento em tempo rea
 ### 1. Subir o backend
 ```bash
 cd backend
+cp .env.example .env
 docker compose up -d
 ```
 
 ### 2. Testar sem hardware (simulação)
 ```bash
 # Publicar dado de teste no MQTT
-docker exec mosquitto mosquitto_pub \
-  -t "farm/F01/pond/P01/telemetry" \
-  -u "shrimp" -P "shrimp123" \
-  -m '{"timestamp":1710000000,"pond_id":"P01","temperature":28.5,"device_id":"esp32-sim"}'
+docker exec camarao-mqtt mosquitto_pub \
+  -t "farm/farm-01/pond/pond-01/telemetry" \
+  -u "camarao" -P "mqtt_senha_segura" \
+  -m '{"timestamp":1710000000,"pond_id":"pond-01","temperature":28.5,"device_id":"esp32-sim"}'
 ```
 
 ### 3. Acessar o Dashboard Streamlit

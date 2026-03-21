@@ -129,6 +129,14 @@ Veja as [issues](https://github.com/dronreef2/carcinicultura/issues) para o back
 - [Esquema SQL](./schema.sql) — Banco de dados PostgreSQL + TimescaleDB
 - [README Módulo 1](./README-MODULO1.md) — Guia detalhado do protótipo
 
+## 💼 Kit Comercial
+
+- [Proposta Comercial 1 Página](./docs/apresentacao-comercial-1-pagina.md) — resumo executivo para apresentação
+- [Grade de Preços Start/Growth/Pro](./docs/comercial/grade-precos-start-growth-pro.md) — tabela de planos, descontos e regras comerciais
+- [Roteiro de Negociação](./docs/comercial/roteiro-negociacao.md) — script de reunião, objeções e fechamento
+- [Template de Proposta de Piloto](./docs/comercial/template-proposta-piloto.md) — modelo pronto para preencher com dados da fazenda
+- [Calculadora de ROI](./docs/comercial/calculadora-roi.py) — simulação de benefício, ROI e payback por cenário
+
 ## 📝 Licença
 
 MIT

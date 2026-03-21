@@ -58,9 +58,10 @@ async def criar_schema():
                 farm_id VARCHAR(50) NOT NULL DEFAULT 'farm-01',
                 status VARCHAR(20) NOT NULL DEFAULT 'active',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
-
-            COMMENT ON TABLE ponds IS 'Viveiros de camarão cadastrados no sistema';
+            )
+        """))
+        await conn.execute(text("""
+            COMMENT ON TABLE ponds IS 'Viveiros de camarão cadastrados no sistema'
         """))
         logger.info("Tabela 'ponds' criada/verificada.")
 
@@ -73,7 +74,7 @@ async def criar_schema():
                 device_id VARCHAR(50) NOT NULL,
                 temperature DECIMAL(5,2),
                 PRIMARY KEY (id, timestamp)
-            );
+            )
         """))
         logger.info("Tabela 'sensor_readings' criada/verificada.")
 
@@ -85,14 +86,14 @@ async def criar_schema():
                 by_range('timestamp'),
                 if_not_exists => TRUE,
                 migrate_data => TRUE
-            );
+            )
         """))
         logger.info("Hypertable 'sensor_readings' configurada.")
 
         # Índice composto para consultas por viveiro + tempo
         await conn.execute(text("""
             CREATE INDEX IF NOT EXISTS idx_readings_pond_time
-            ON sensor_readings (pond_id, timestamp DESC);
+            ON sensor_readings (pond_id, timestamp DESC)
         """))
         logger.info("Índice 'idx_readings_pond_time' criado/verificado.")
 
@@ -102,7 +103,7 @@ async def criar_schema():
             VALUES
                 ('pond-01', 'Viveiro 1', 'farm-01'),
                 ('pond-02', 'Viveiro 2', 'farm-01')
-            ON CONFLICT (id) DO NOTHING;
+            ON CONFLICT (id) DO NOTHING
         """))
         logger.info("Viveiros padrão inseridos.")
 
@@ -116,10 +117,11 @@ async def criar_schema():
                 temperatura DECIMAL(5,2),
                 reconhecido BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
-
+            )
+        """))
+        await conn.execute(text("""
             CREATE INDEX IF NOT EXISTS idx_alerts_pond_created
-            ON alerts (pond_id, created_at DESC);
+            ON alerts (pond_id, created_at DESC)
         """))
         logger.info("Tabela 'alerts' criada/verificada.")
 
@@ -135,11 +137,12 @@ async def criar_schema():
                 max_critical DECIMAL(6,2),
                 ativo BOOLEAN NOT NULL DEFAULT TRUE,
                 UNIQUE (pond_id, parametro)
-            );
-
+            )
+        """))
+        await conn.execute(text("""
             INSERT INTO alert_rules (pond_id, parametro, min_warning, min_critical, max_warning, max_critical)
             VALUES ('*', 'temperature', 24.0, 22.0, 32.0, 34.0)
-            ON CONFLICT (pond_id, parametro) DO NOTHING;
+            ON CONFLICT (pond_id, parametro) DO NOTHING
         """))
         logger.info("Tabela 'alert_rules' e regras padrão criadas/verificadas.")
 

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Python
 __pycache__/
 *.py[cod]
@@ -13,8 +14,6 @@ build/
 venv/
 env/
 
-# pytest / coverage
-.pytest_cache/
 .coverage
 htmlcov/
 
@@ -32,3 +31,8 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+=======
+__pycache__/
+*.pyc
+.env
+>>>>>>> origin/main

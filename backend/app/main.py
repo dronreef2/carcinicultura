@@ -14,13 +14,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import paho.mqtt.client as mqtt
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import criar_schema, fechar_conexao, async_session, get_session
-from app.models import TelemetriaPayload, LeituraSensor, UltimaLeitura, Viveiro
+from app.models import TelemetriaPayload, LeituraSensor, UltimaLeitura, Viveiro, Alerta
 
 # ─── Configuração de logging ───────────────────────────────────────────────────
 
@@ -38,6 +38,13 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "camarao")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "mqtt_senha_segura")
 MQTT_TOPIC = "farm/+/pond/+/telemetry"
+
+# Origens CORS configuráveis via env (separadas por vírgula, ou "*" para todas)
+_cors_origins_raw = os.getenv("CORS_ORIGINS", "*")
+CORS_ORIGINS: list[str] = (
+    ["*"] if _cors_origins_raw.strip() == "*"
+    else [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+)
 
 # ─── Gerenciador de WebSockets ativos ──────────────────────────────────────────
 
@@ -128,42 +135,141 @@ def ao_receber_mensagem(client, userdata, msg):
 async def processar_telemetria(telemetria: TelemetriaPayload):
     """
     Processa uma leitura de telemetria:
-    1. Insere no banco de dados (TimescaleDB)
-    2. Notifica clientes WebSocket conectados ao viveiro
+    1. Insere no banco de dados (TimescaleDB) — ignora duplicatas
+    2. Verifica thresholds e registra alertas quando necessário
+    3. Notifica clientes WebSocket conectados ao viveiro
     """
     ts = datetime.fromtimestamp(telemetria.timestamp, tz=timezone.utc)
 
-    # Insere no banco
+    # Insere no banco com tratamento de erro e rollback explícito
     async with async_session() as session:
-        await session.execute(
-            text("""
-                INSERT INTO sensor_readings (timestamp, pond_id, device_id, temperature)
-                VALUES (:ts, :pond_id, :device_id, :temperature)
-            """),
-            {
-                "ts": ts,
-                "pond_id": telemetria.pond_id,
-                "device_id": telemetria.device_id,
-                "temperature": telemetria.temperature,
-            },
-        )
-        await session.commit()
+        try:
+            await session.execute(
+                text("""
+                    INSERT INTO sensor_readings (timestamp, pond_id, device_id, temperature)
+                    VALUES (:ts, :pond_id, :device_id, :temperature)
+                    ON CONFLICT DO NOTHING
+                """),
+                {
+                    "ts": ts,
+                    "pond_id": telemetria.pond_id,
+                    "device_id": telemetria.device_id,
+                    "temperature": telemetria.temperature,
+                },
+            )
+            await session.commit()
 
-    logger.info(
-        f"[DB] Inserido: {telemetria.pond_id} → {telemetria.temperature}°C @ {ts.isoformat()}"
-    )
+            logger.info(
+                f"[DB] Inserido: {telemetria.pond_id} → {telemetria.temperature}°C @ {ts.isoformat()}"
+            )
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"[DB] Falha ao inserir leitura de {telemetria.pond_id}: {e}")
+            return
+
+    # Verifica thresholds e registra alerta se necessário
+    alerta = await verificar_alertas(telemetria.pond_id, telemetria.temperature, ts)
+
+    # Monta payload WebSocket (inclui alerta se houver)
+    ws_payload: dict = {
+        "tipo": "leitura",
+        "pond_id": telemetria.pond_id,
+        "temperature": telemetria.temperature,
+        "timestamp": ts.isoformat(),
+        "device_id": telemetria.device_id,
+    }
+    if alerta:
+        ws_payload["alerta"] = {
+            "severidade": alerta.severidade,
+            "mensagem": alerta.mensagem,
+        }
 
     # Notifica via WebSocket
-    await ws_manager.enviar_para_viveiro(
-        telemetria.pond_id,
-        {
-            "tipo": "leitura",
-            "pond_id": telemetria.pond_id,
-            "temperature": telemetria.temperature,
-            "timestamp": ts.isoformat(),
-            "device_id": telemetria.device_id,
-        },
+    await ws_manager.enviar_para_viveiro(telemetria.pond_id, ws_payload)
+
+
+async def verificar_alertas(pond_id: str, temperatura: float, ts: datetime) -> Optional[Alerta]:
+    """
+    Verifica se a temperatura ultrapassa os thresholds definidos nas regras de alerta.
+    Persiste o alerta no banco e retorna o objeto de alerta (ou None se dentro da faixa).
+    """
+    async with async_session() as session:
+        try:
+            result = await session.execute(
+                text("""
+                    SELECT min_warning, min_critical, max_warning, max_critical
+                    FROM alert_rules
+                    WHERE (pond_id = :pond_id OR pond_id = '*')
+                      AND parametro = 'temperature'
+                      AND ativo = TRUE
+                    ORDER BY pond_id DESC
+                    LIMIT 1
+                """),
+                {"pond_id": pond_id},
+            )
+            regra = result.fetchone()
+        except Exception as e:
+            logger.error(f"[ALERTA] Erro ao consultar regras: {e}")
+            return None
+
+    if not regra:
+        return None
+
+    min_warn = float(regra.min_warning) if regra.min_warning is not None else None
+    min_crit = float(regra.min_critical) if regra.min_critical is not None else None
+    max_warn = float(regra.max_warning) if regra.max_warning is not None else None
+    max_crit = float(regra.max_critical) if regra.max_critical is not None else None
+
+    severidade = None
+    mensagem = None
+
+    if min_crit is not None and temperatura <= min_crit:
+        severidade = "critical"
+        mensagem = f"Temperatura CRÍTICA (fria): {temperatura:.1f}°C ≤ {min_crit}°C"
+    elif max_crit is not None and temperatura >= max_crit:
+        severidade = "critical"
+        mensagem = f"Temperatura CRÍTICA (quente): {temperatura:.1f}°C ≥ {max_crit}°C"
+    elif min_warn is not None and temperatura < min_warn:
+        severidade = "warning"
+        mensagem = f"Temperatura baixa: {temperatura:.1f}°C < {min_warn}°C"
+    elif max_warn is not None and temperatura > max_warn:
+        severidade = "warning"
+        mensagem = f"Temperatura alta: {temperatura:.1f}°C > {max_warn}°C"
+
+    if not severidade:
+        return None
+
+    alerta = Alerta(
+        pond_id=pond_id,
+        severidade=severidade,
+        mensagem=mensagem,
+        temperatura=temperatura,
+        timestamp=ts,
     )
+
+    # Persiste o alerta no banco
+    async with async_session() as session:
+        try:
+            await session.execute(
+                text("""
+                    INSERT INTO alerts (pond_id, severidade, mensagem, temperatura, created_at)
+                    VALUES (:pond_id, :severidade, :mensagem, :temperatura, :created_at)
+                """),
+                {
+                    "pond_id": pond_id,
+                    "severidade": severidade,
+                    "mensagem": mensagem,
+                    "temperatura": temperatura,
+                    "created_at": ts,
+                },
+            )
+            await session.commit()
+            logger.warning(f"[ALERTA] {severidade.upper()} em {pond_id}: {mensagem}")
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"[ALERTA] Falha ao persistir alerta: {e}")
+
+    return alerta
 
 
 def iniciar_mqtt():
@@ -232,14 +338,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="IoT Camarão — API",
     description="API do sistema IoT para monitoramento de viveiros de camarão",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
-# Habilita CORS para o dashboard acessar a API
+# Habilita CORS — origens configuráveis via variável de ambiente CORS_ORIGINS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -268,11 +374,13 @@ async def listar_viveiros(session: AsyncSession = Depends(get_session)):
 async def listar_leituras(
     pond_id: str,
     hours: int = Query(default=24, ge=1, le=168, description="Horas de histórico (1-168)"),
+    limit: int = Query(default=1000, ge=1, le=5000, description="Limite máximo de registros"),
     session: AsyncSession = Depends(get_session),
 ):
     """
     Retorna as leituras de sensor de um viveiro nas últimas N horas.
     Padrão: últimas 24 horas. Máximo: 168 horas (7 dias).
+    O parâmetro `limit` controla o número máximo de pontos retornados (padrão 1000).
     """
     desde = datetime.now(timezone.utc) - timedelta(hours=hours)
 
@@ -282,8 +390,9 @@ async def listar_leituras(
             FROM sensor_readings
             WHERE pond_id = :pond_id AND timestamp >= :desde
             ORDER BY timestamp ASC
+            LIMIT :limit
         """),
-        {"pond_id": pond_id, "desde": desde},
+        {"pond_id": pond_id, "desde": desde, "limit": limit},
     )
     rows = result.fetchall()
     return [
@@ -353,6 +462,65 @@ async def ultima_leitura(
         avg_24h=round(float(stats.avg_temp), 2) if stats.avg_temp else None,
         total_leituras_24h=stats.total,
     )
+
+
+@app.get("/api/ponds/{pond_id}/alerts", response_model=list[Alerta])
+async def listar_alertas(
+    pond_id: str,
+    hours: int = Query(default=24, ge=1, le=168, description="Horas de histórico (1-168)"),
+    limit: int = Query(default=50, ge=1, le=500, description="Limite máximo de alertas"),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Retorna os alertas de temperatura gerados para um viveiro nas últimas N horas.
+    """
+    desde = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    result = await session.execute(
+        text("""
+            SELECT pond_id, severidade, mensagem, temperatura, reconhecido, created_at
+            FROM alerts
+            WHERE pond_id = :pond_id AND created_at >= :desde
+            ORDER BY created_at DESC
+            LIMIT :limit
+        """),
+        {"pond_id": pond_id, "desde": desde, "limit": limit},
+    )
+    rows = result.fetchall()
+    return [
+        Alerta(
+            pond_id=r.pond_id,
+            severidade=r.severidade,
+            mensagem=r.mensagem,
+            temperatura=float(r.temperatura),
+            timestamp=r.created_at,
+            reconhecido=r.reconhecido,
+        )
+        for r in rows
+    ]
+
+
+@app.patch("/api/ponds/{pond_id}/alerts/{alert_id}/acknowledge")
+async def reconhecer_alerta(
+    pond_id: str,
+    alert_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    """Marca um alerta como reconhecido (acknowledge)."""
+    result = await session.execute(
+        text("""
+            UPDATE alerts
+            SET reconhecido = TRUE
+            WHERE id = :alert_id AND pond_id = :pond_id
+            RETURNING id
+        """),
+        {"alert_id": alert_id, "pond_id": pond_id},
+    )
+    updated = result.fetchone()
+    if not updated:
+        raise HTTPException(status_code=404, detail="Alerta não encontrado")
+    await session.commit()
+    return {"status": "ok", "alert_id": alert_id}
 
 
 # ─── WebSocket para streaming em tempo real ─────────────────────────────────────

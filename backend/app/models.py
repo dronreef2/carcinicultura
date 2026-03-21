@@ -6,10 +6,9 @@ respostas da API e mensagens WebSocket.
 """
 
 from datetime import datetime
-from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ─── Telemetria recebida do MQTT ────────────────────────────────────────────────
@@ -17,8 +16,8 @@ from pydantic import BaseModel, Field
 class TelemetriaPayload(BaseModel):
     """Payload JSON recebido do ESP32 via MQTT."""
     timestamp: int = Field(..., description="Epoch Unix em segundos")
-    pond_id: str = Field(..., description="Identificador do viveiro")
-    device_id: str = Field(..., description="Identificador do dispositivo")
+    pond_id: str = Field(..., min_length=1, max_length=50, description="Identificador do viveiro")
+    device_id: str = Field(..., min_length=1, max_length=50, description="Identificador do dispositivo")
     temperature: float = Field(..., ge=-10, le=60, description="Temperatura em °C")
 
 
@@ -26,14 +25,13 @@ class TelemetriaPayload(BaseModel):
 
 class LeituraSensor(BaseModel):
     """Leitura individual do sensor retornada pela API."""
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     timestamp: datetime
     pond_id: str
     device_id: str
     temperature: float
-
-    class Config:
-        from_attributes = True
 
 
 class UltimaLeitura(BaseModel):
@@ -63,6 +61,16 @@ class EstatisticasViveiro(BaseModel):
     temperatura_max_24h: Optional[float] = None
     temperatura_media_24h: Optional[float] = None
     ultima_leitura: Optional[datetime] = None
+
+
+class Alerta(BaseModel):
+    """Alerta de temperatura gerado pelo sistema."""
+    pond_id: str
+    severidade: str = Field(..., description="info | warning | critical")
+    mensagem: str
+    temperatura: float
+    timestamp: datetime
+    reconhecido: bool = False
 
 
 # ─── WebSocket ──────────────────────────────────────────────────────────────────

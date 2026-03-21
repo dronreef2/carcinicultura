@@ -106,6 +106,43 @@ async def criar_schema():
         """))
         logger.info("Viveiros padrão inseridos.")
 
+        # Tabela de alertas gerados pelo sistema
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS alerts (
+                id BIGSERIAL PRIMARY KEY,
+                pond_id VARCHAR(50) NOT NULL,
+                severidade VARCHAR(20) NOT NULL DEFAULT 'warning',
+                mensagem TEXT NOT NULL,
+                temperatura DECIMAL(5,2),
+                reconhecido BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_alerts_pond_created
+            ON alerts (pond_id, created_at DESC);
+        """))
+        logger.info("Tabela 'alerts' criada/verificada.")
+
+        # Tabela de regras de alerta por viveiro
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS alert_rules (
+                id SERIAL PRIMARY KEY,
+                pond_id VARCHAR(50) NOT NULL DEFAULT '*',
+                parametro VARCHAR(50) NOT NULL DEFAULT 'temperature',
+                min_warning DECIMAL(6,2),
+                min_critical DECIMAL(6,2),
+                max_warning DECIMAL(6,2),
+                max_critical DECIMAL(6,2),
+                ativo BOOLEAN NOT NULL DEFAULT TRUE,
+                UNIQUE (pond_id, parametro)
+            );
+
+            INSERT INTO alert_rules (pond_id, parametro, min_warning, min_critical, max_warning, max_critical)
+            VALUES ('*', 'temperature', 24.0, 22.0, 32.0, 34.0)
+            ON CONFLICT (pond_id, parametro) DO NOTHING;
+        """))
+        logger.info("Tabela 'alert_rules' e regras padrão criadas/verificadas.")
+
     logger.info("Schema do banco de dados pronto!")
 
 

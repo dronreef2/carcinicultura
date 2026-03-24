@@ -102,6 +102,56 @@ Acesse http://localhost:8501 no navegador.
 
 Veja instruções detalhadas em [README-MODULO1.md](./README-MODULO1.md).
 
+### 5. Smoke test E2E (comando -> ACK -> status final)
+Com backend, broker MQTT e firmware rodando, execute:
+
+```bash
+python backend/scripts/smoke_command_ack.py \
+  --backend-url http://localhost:8000 \
+  --mqtt-host localhost \
+  --mqtt-user camarao \
+  --mqtt-password mqtt_senha_segura \
+  --pond-id pond-01 \
+  --farm-id farm-01 \
+  --command pulse \
+  --duration-s 5
+```
+
+Resultado esperado:
+- Script imprime o `command_id` criado na API
+- Recebe ACK MQTT com o mesmo `command_id`
+- Confirma status final `confirmed` no histórico de comandos
+
+### 6. CI local em 1 comando (PowerShell)
+
+Somente validação unitária (rápido):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_local_ci.ps1
+```
+
+Validação completa com smoke E2E:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_local_ci.ps1 -RunSmoke
+```
+
+Pré-requisitos do smoke:
+- Backend ativo em http://localhost:8000
+- Broker MQTT ativo em localhost:1883
+- Para subir localmente: `cd backend && docker compose up -d`
+
+Validação completa com smoke simulado (sem firmware físico):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_local_ci.ps1 -RunSmoke -SimulateAck
+```
+
+No VS Code, também estão disponíveis as tasks:
+- `CI Local: Unitario`
+- `CI Local: Unitario + Smoke`
+- `CI Local: Unitario + Smoke Simulado`
+
 ## 📊 Módulos de Desenvolvimento
 
 | Módulo | Descrição | Prioridade |

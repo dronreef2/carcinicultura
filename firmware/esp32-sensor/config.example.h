@@ -30,6 +30,11 @@
 #define SENSOR_PIN    4                 // GPIO do barramento OneWire (DS18B20)
 #define LED_PIN       2                 // LED onboard do ESP32 (GPIO 2)
 
+// Controle de atuador (aerador)
+#define AERATOR_RELAY_PIN      16       // GPIO ligado ao módulo relé do aerador
+#define AERATOR_ACTIVE_LEVEL   HIGH     // HIGH para relé ativo em nível alto; LOW para relé invertido
+#define AERATOR_PULSE_DEFAULT_S 10      // Duração padrão para comando "pulse"
+
 // ─── Intervalos (milissegundos) ────────────────────────────────────────────────
 #define PUBLISH_INTERVAL_MS  60000      // Intervalo de publicação: 60 segundos
 #define SENSOR_READ_DELAY_MS 1000       // Tempo de conversão do DS18B20

@@ -19,6 +19,12 @@ class TelemetriaPayload(BaseModel):
     pond_id: str = Field(..., min_length=1, max_length=50, description="Identificador do viveiro")
     device_id: str = Field(..., min_length=1, max_length=50, description="Identificador do dispositivo")
     temperature: float = Field(..., ge=-10, le=60, description="Temperatura em °C")
+    dissolved_oxygen: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=30,
+        description="Oxigênio dissolvido em mg/L (opcional)",
+    )
 
 
 # ─── Modelos de resposta da API ─────────────────────────────────────────────────
@@ -32,6 +38,7 @@ class LeituraSensor(BaseModel):
     pond_id: str
     device_id: str
     temperature: float
+    dissolved_oxygen: Optional[float] = None
 
 
 class UltimaLeitura(BaseModel):
@@ -71,6 +78,28 @@ class Alerta(BaseModel):
     temperatura: float
     timestamp: datetime
     reconhecido: bool = False
+
+
+# ─── Comandos de atuadores ────────────────────────────────────────────────────
+
+class ComandoAtuadorRequest(BaseModel):
+    """Comando solicitado para um atuador (ex.: aerador)."""
+    command: str = Field(..., description="on | off | pulse")
+    source: str = Field(default="manual", description="manual | auto")
+    duration_s: Optional[int] = Field(default=None, ge=1, le=3600, description="Duração em segundos para comando pulse")
+
+
+class ComandoAtuador(BaseModel):
+    """Registro de comando de atuador persistido no backend."""
+    id: int
+    command_id: Optional[str] = None
+    pond_id: str
+    actuator_type: str
+    command: str
+    source: str
+    status: str
+    details: Optional[str] = None
+    created_at: datetime
 
 
 # ─── WebSocket ──────────────────────────────────────────────────────────────────

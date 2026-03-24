@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Python
 __pycache__/
 *.py[cod]
@@ -31,8 +30,3 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
-=======
-__pycache__/
-*.pyc
-.env
->>>>>>> origin/main

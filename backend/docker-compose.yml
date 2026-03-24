@@ -75,6 +75,11 @@ services:
       MQTT_USER: ${MQTT_USER:-camarao}
       MQTT_PASSWORD: ${MQTT_PASSWORD:-mqtt_senha_segura}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      ACTUATOR_MQTT_TOPIC_TEMPLATE: ${ACTUATOR_MQTT_TOPIC_TEMPLATE:-farm/{farm_id}/pond/{pond_id}/actuator/{actuator_type}/set}
+      TELEGRAM_ENABLED: ${TELEGRAM_ENABLED:-false}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_MIN_SEVERITY: ${TELEGRAM_MIN_SEVERITY:-warning}
     depends_on:
       timescaledb:
         condition: service_healthy

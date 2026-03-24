@@ -6,14 +6,10 @@ Exibe dados de sensores, alertas, eventos de manejo e estudos de produção.
 """
 
 import streamlit as st
-import pandas as pd
 from datetime import datetime
+import os
 
-from data_simulator import (
-    generate_ponds, generate_sensor_data, generate_cycles,
-    generate_biometrics, generate_harvests, generate_management_events,
-    generate_alerts
-)
+from data_loader import load_dashboard_data
 
 # ============================================================================
 # Configuração da página
@@ -104,40 +100,51 @@ st.markdown("""
 
 
 # ============================================================================
-# Cache de dados simulados
+# Cache de dados (API real ou simulacao)
 # ============================================================================
-@st.cache_data(ttl=300)  # Refresh a cada 5 min
-def load_data():
-    """Carrega todos os dados simulados."""
-    ponds = generate_ponds()
-    
-    sensor_data = {}
-    for pond_id in ponds[ponds['status'] == 'active']['id']:
-        sensor_data[pond_id] = generate_sensor_data(pond_id, hours=168)
-    
-    cycles = generate_cycles()
-    biometrics = generate_biometrics(cycles)
-    harvests = generate_harvests(cycles)
-    events = generate_management_events(ponds, days=7)
-    alerts = generate_alerts(sensor_data)
-    
-    return {
-        'ponds': ponds,
-        'sensor_data': sensor_data,
-        'cycles': cycles,
-        'biometrics': biometrics,
-        'harvests': harvests,
-        'events': events,
-        'alerts': alerts,
-    }
+@st.cache_data(ttl=60)
+def load_data(source_mode: str, api_base_url: str):
+    """Carrega dados do backend real (ou simulados em fallback)."""
+    return load_dashboard_data(source_mode=source_mode, api_base_url=api_base_url)
 
 
 # ============================================================================
 # Sidebar / Navegação
 # ============================================================================
-data = load_data()
+api_base_url = os.getenv("BACKEND_API_URL", "http://localhost:8000").rstrip("/")
+
+source_options = {
+    "Auto (tenta API)": "auto",
+    "API real": "api",
+    "Simulacao": "sim",
+}
+
+default_source = os.getenv("DASHBOARD_DATA_SOURCE", "auto").lower()
+default_label = "Auto (tenta API)"
+for label, value in source_options.items():
+    if value == default_source:
+        default_label = label
+        break
+
+selected_source_label = st.sidebar.selectbox(
+    "Fonte de dados",
+    list(source_options.keys()),
+    index=list(source_options.keys()).index(default_label),
+)
+
+selected_source_mode = source_options[selected_source_label]
+data, data_info = load_data(selected_source_mode, api_base_url)
 
 st.sidebar.markdown("## 🦐 Smart Shrimp Farm")
+st.sidebar.markdown("---")
+
+if data_info["source"] == "api":
+    st.sidebar.success(f"API conectada: {api_base_url}")
+else:
+    st.sidebar.warning("Modo simulacao ativo")
+    if data_info.get("error"):
+        st.sidebar.caption(f"Fallback: {data_info['error']}")
+
 st.sidebar.markdown("---")
 
 page = st.sidebar.radio(

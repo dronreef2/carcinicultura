@@ -1,0 +1,79 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: camarao-mqtt
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ../backend/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ../backend/mosquitto/password.txt:/mosquitto/config/password.txt:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: camarao-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - timescale_data:/home/postgres/pgdata/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: camarao-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB}
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+      MQTT_USER: ${MQTT_USER}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      ACTUATOR_MQTT_TOPIC_TEMPLATE: ${ACTUATOR_MQTT_TOPIC_TEMPLATE}
+      TELEGRAM_ENABLED: ${TELEGRAM_ENABLED}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      TELEGRAM_MIN_SEVERITY: ${TELEGRAM_MIN_SEVERITY}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+
+  dashboard:
+    build:
+      context: ../streamlit-dashboard
+      dockerfile: Dockerfile
+    container_name: camarao-dashboard
+    restart: unless-stopped
+    environment:
+      DASHBOARD_DATA_SOURCE: ${DASHBOARD_DATA_SOURCE}
+      BACKEND_API_URL: ${BACKEND_API_URL}
+      API_TIMEOUT_S: ${API_TIMEOUT_S}
+    depends_on:
+      - backend
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: camarao-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - dashboard
+      - backend
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:
+  timescale_data:

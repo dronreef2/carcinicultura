@@ -36,6 +36,8 @@ ESP32 lê sensor DS18B20 → envia via MQTT → backend armazena no TimescaleDB 
 
 1. **ESP32** lê temperatura do DS18B20 a cada 60 segundos
 2. Publica JSON via **MQTT** no tópico `farm/{id}/pond/{id}/telemetry`
+  - Campo mínimo: `temperature`
+  - Campo opcional já suportado no backend: `dissolved_oxygen` (mg/L)
 3. **Backend FastAPI** recebe a mensagem, valida e insere no **TimescaleDB**
 4. Backend notifica **WebSocket** conectados
 5. **Dashboard** atualiza gráfico e métricas em tempo real
@@ -119,6 +121,13 @@ Edite `config.h` com os dados da sua rede e servidor:
 #define WIFI_PASSWORD "MinhaSenha123"
 #define MQTT_HOST     "192.168.1.100"  // IP do servidor Docker
 #define POND_ID       "pond-01"
+#define AERATOR_RELAY_PIN 16            // GPIO do relé do aerador
+```
+
+Se seu módulo relé for invertido (ativo em nível baixo), ajuste:
+
+```c
+#define AERATOR_ACTIVE_LEVEL LOW
 ```
 
 ### 5. Upload para o ESP32
@@ -190,6 +199,19 @@ docker compose logs -f
 docker compose logs -f backend
 ```
 
+### 5. Alertas no Telegram (opcional)
+
+No arquivo `backend/.env`, configure:
+
+```env
+TELEGRAM_ENABLED=true
+TELEGRAM_BOT_TOKEN=seu_token_do_bot
+TELEGRAM_CHAT_ID=seu_chat_id
+TELEGRAM_MIN_SEVERITY=warning
+```
+
+Com isso, alertas de temperatura gerados no backend também são enviados ao Telegram.
+
 ---
 
 ## Testando o Sistema
@@ -219,7 +241,7 @@ mosquitto_pub \
   -h localhost -p 1883 \
   -u camarao -P mqtt_senha_segura \
   -t "farm/farm-01/pond/pond-01/telemetry" \
-  -m '{"timestamp": 1710700000, "pond_id": "pond-01", "device_id": "esp32-test", "temperature": 28.5}'
+  -m '{"timestamp": 1710700000, "pond_id": "pond-01", "device_id": "esp32-test", "temperature": 28.5, "dissolved_oxygen": 5.1}'
 ```
 
 ### Teste 3: Abrir o Dashboard
@@ -234,6 +256,46 @@ streamlit run app.py
 
 Acesse: http://localhost:8501
 
+### Teste 4: Acionar aerador remotamente
+
+Envie comando pelo backend:
+
+```bash
+curl -X POST http://localhost:8000/api/ponds/pond-01/actuators/aerator/commands \
+  -H "Content-Type: application/json" \
+  -d '{"command":"pulse","source":"manual","duration_s":5}'
+```
+
+Anote o campo `command_id` retornado pela API. Esse mesmo valor deve aparecer
+no ACK publicado pelo firmware.
+
+No Monitor Serial do ESP32, valide os logs de comando e mudança de estado do aerador.
+
+Para validar ACK MQTT do dispositivo, acompanhe em outro terminal:
+
+```bash
+mosquitto_sub \
+  -h localhost -p 1883 \
+  -u camarao -P mqtt_senha_segura \
+  -t "farm/farm-01/pond/pond-01/actuator/aerator/ack" -v
+```
+
+Exemplo de payload ACK:
+
+```json
+{"timestamp":1710700001,"farm_id":"farm-01","pond_id":"pond-01","device_id":"esp32-01","actuator_type":"aerator","command":"pulse","command_id":"4a2670aa-8cc8-4ef5-9706-e5a16d78e469","source":"manual","status":"ok","message":"executed","aerator_state":"off","duration_s":5}
+```
+
+Quando esse ACK chega no backend, o status do comando em `/api/ponds/{id}/actuators/commands`
+é atualizado automaticamente para `confirmed` (ACK `ok`) ou `error`, correlacionando
+o comando exato via `command_id`.
+
+Para conferir o status final do comando específico:
+
+```bash
+curl "http://localhost:8000/api/ponds/pond-01/actuators/commands?limit=5"
+```
+
 ---
 
 ## API — Referência Rápida
@@ -246,7 +308,17 @@ Acesse: http://localhost:8501
 | GET | `/api/ponds/{id}/latest` | Última leitura + estatísticas 24h |
 | GET | `/api/ponds/{id}/alerts?limit=50` | Alertas do viveiro |
 | PATCH | `/api/ponds/{id}/alerts/{alert_id}/acknowledge` | Reconhece alerta |
+| POST | `/api/ponds/{id}/actuators/aerator/commands` | Envia comando de aerador (on/off/pulse) |
+| GET | `/api/ponds/{id}/actuators/commands?limit=100` | Histórico de comandos de atuadores |
 | WS | `/ws/ponds/{id}` | Stream de leituras em tempo real |
+
+### Exemplo — Acionar aerador
+
+```bash
+curl -X POST http://localhost:8000/api/ponds/pond-01/actuators/aerator/commands \
+  -H "Content-Type: application/json" \
+  -d '{"command":"on","source":"manual"}'
+```
 
 ### Exemplo de resposta — `/api/ponds/pond-01/latest`
 

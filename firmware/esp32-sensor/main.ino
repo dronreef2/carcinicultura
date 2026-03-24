@@ -32,6 +32,19 @@
 
 #include "config.h"
 
+// Valores padrão para manter compatibilidade com config.h antigos
+#ifndef AERATOR_RELAY_PIN
+#define AERATOR_RELAY_PIN 16
+#endif
+
+#ifndef AERATOR_ACTIVE_LEVEL
+#define AERATOR_ACTIVE_LEVEL HIGH
+#endif
+
+#ifndef AERATOR_PULSE_DEFAULT_S
+#define AERATOR_PULSE_DEFAULT_S 10
+#endif
+
 // ─── Objetos globais ───────────────────────────────────────────────────────────
 
 // Barramento OneWire no pino configurado
@@ -51,9 +64,15 @@ unsigned long ultimoPiscaLed = 0;    // Controle do pisca-LED
 bool ledLigado = false;              // Estado atual do LED
 int tentativasWifi = 0;              // Contador de reconexões WiFi
 int tentativasMqtt = 0;              // Contador de reconexões MQTT
+bool aeradorLigado = false;          // Estado atual do aerador (relé)
 
 // Tópico MQTT montado em tempo de execução
 char topicoMqtt[128];
+char topicoMqttComando[128];
+char topicoMqttAck[128];
+
+// Protótipos
+unsigned long obterTimestamp();
 
 // ─── Funções auxiliares ────────────────────────────────────────────────────────
 
@@ -70,6 +89,130 @@ void piscarLed(int vezes, int duracaoMs) {
     if (i < vezes - 1) {
       delay(duracaoMs);
     }
+  }
+}
+
+/**
+ * definirAerador — Atualiza o estado físico do relé do aerador
+ */
+void definirAerador(bool ligar, const char* origem) {
+  aeradorLigado = ligar;
+  digitalWrite(AERATOR_RELAY_PIN, ligar ? AERATOR_ACTIVE_LEVEL : !AERATOR_ACTIVE_LEVEL);
+  Serial.printf("[AERADOR] %s via %s\n", ligar ? "LIGADO" : "DESLIGADO", origem);
+}
+
+/**
+ * pulsarAerador — Liga por alguns segundos e depois desliga
+ */
+void pulsarAerador(int duracaoS, const char* origem) {
+  if (duracaoS <= 0) {
+    duracaoS = AERATOR_PULSE_DEFAULT_S;
+  }
+
+  Serial.printf("[AERADOR] Pulso solicitado (%ds) via %s\n", duracaoS, origem);
+  definirAerador(true, origem);
+
+  unsigned long inicio = millis();
+  unsigned long duracaoMs = (unsigned long)duracaoS * 1000UL;
+  while (millis() - inicio < duracaoMs) {
+    delay(100);
+    esp_task_wdt_reset();
+  }
+
+  definirAerador(false, origem);
+}
+
+/**
+ * publicarAckComando — Publica confirmação de execução do comando do aerador
+ */
+void publicarAckComando(const char* comando,
+                        const char* commandId,
+                        const char* source,
+                        const char* status,
+                        const char* message,
+                        int duracaoS) {
+  if (!mqttClient.connected()) {
+    Serial.println("[MQTT] ACK não enviado: cliente MQTT desconectado.");
+    return;
+  }
+
+  StaticJsonDocument<256> doc;
+  doc["timestamp"] = obterTimestamp();
+  doc["farm_id"] = FARM_ID;
+  doc["pond_id"] = POND_ID;
+  doc["device_id"] = DEVICE_ID;
+  doc["actuator_type"] = "aerator";
+  doc["command"] = comando;
+  if (commandId != nullptr && strlen(commandId) > 0) {
+    doc["command_id"] = commandId;
+  }
+  doc["source"] = source;
+  doc["status"] = status;
+  doc["message"] = message;
+  doc["aerator_state"] = aeradorLigado ? "on" : "off";
+  if (duracaoS > 0) {
+    doc["duration_s"] = duracaoS;
+  }
+
+  char payload[256];
+  size_t tamanho = serializeJson(doc, payload, sizeof(payload));
+
+  bool ok = mqttClient.publish(topicoMqttAck, payload, false);
+  if (ok) {
+    Serial.printf("[MQTT] ACK publicado (%d bytes): %s\n", tamanho, payload);
+  } else {
+    Serial.println("[MQTT] ERRO ao publicar ACK de comando.");
+  }
+}
+
+/**
+ * aoReceberComandoMqtt — Processa comandos de atuador vindos do backend
+ * Payload esperado:
+ *   {"command":"on|off|pulse","source":"manual|auto","duration_s":10}
+ */
+void aoReceberComandoMqtt(char* topic, byte* payload, unsigned int length) {
+  Serial.printf("[MQTT] Comando recebido em %s (%u bytes)\n", topic, length);
+
+  if (strcmp(topic, topicoMqttComando) != 0) {
+    Serial.println("[MQTT] Tópico ignorado (não corresponde ao comando do aerador).");
+    return;
+  }
+
+  if (length == 0 || length >= 256) {
+    Serial.println("[MQTT] Payload de comando inválido (tamanho). Ignorando.");
+    publicarAckComando("unknown", "", "backend", "error", "payload_size_invalid", 0);
+    return;
+  }
+
+  char buffer[256];
+  memcpy(buffer, payload, length);
+  buffer[length] = '\0';
+
+  StaticJsonDocument<256> doc;
+  DeserializationError err = deserializeJson(doc, buffer);
+  if (err) {
+    Serial.printf("[MQTT] JSON inválido em comando de atuador: %s\n", err.c_str());
+    publicarAckComando("unknown", "", "backend", "error", "json_invalid", 0);
+    return;
+  }
+
+  const char* comando = doc["command"] | "";
+  const char* commandId = doc["command_id"] | "";
+  const char* source = doc["source"] | "backend";
+  int duracaoS = doc["duration_s"] | AERATOR_PULSE_DEFAULT_S;
+
+  if (strcmp(comando, "on") == 0) {
+    definirAerador(true, source);
+    publicarAckComando(comando, commandId, source, "ok", "executed", 0);
+  } else if (strcmp(comando, "off") == 0) {
+    definirAerador(false, source);
+    publicarAckComando(comando, commandId, source, "ok", "executed", 0);
+  } else if (strcmp(comando, "pulse") == 0) {
+    pulsarAerador(duracaoS, source);
+    publicarAckComando(comando, commandId, source, "ok", "executed", duracaoS);
+  } else {
+    Serial.printf("[AERADOR] Comando inválido: %s\n", comando);
+    publicarAckComando(comando, commandId, source, "error", "command_invalid", 0);
   }
 }
 
@@ -130,6 +273,13 @@ bool conectarMqtt() {
     if (mqttClient.connect(MQTT_CLIENT, MQTT_USER, MQTT_PASSWORD)) {
       tentativasMqtt++;
       Serial.printf("[MQTT] Conectado! (conexão #%d)\n", tentativasMqtt);
+
+      // Reinscreve no tópico de comando a cada reconexão
+      if (mqttClient.subscribe(topicoMqttComando, 0)) {
+        Serial.printf("[MQTT] Inscrito em comando de atuador: %s\n", topicoMqttComando);
+      } else {
+        Serial.printf("[MQTT] ERRO ao inscrever em comando de atuador: %s\n", topicoMqttComando);
+      }
       return true;
     }
 
@@ -220,6 +370,10 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
 
+  // Configura o pino do relé do aerador
+  pinMode(AERATOR_RELAY_PIN, OUTPUT);
+  definirAerador(false, "startup");
+
   // Inicializa o sensor DS18B20
   sensors.begin();
   int sensoresEncontrados = sensors.getDeviceCount();
@@ -238,8 +392,19 @@ void setup() {
            "farm/%s/pond/%s/telemetry", FARM_ID, POND_ID);
   Serial.printf("[MQTT] Tópico: %s\n", topicoMqtt);
 
+  // Monta o tópico MQTT de comando do aerador
+  snprintf(topicoMqttComando, sizeof(topicoMqttComando),
+           "farm/%s/pond/%s/actuator/aerator/set", FARM_ID, POND_ID);
+  Serial.printf("[MQTT] Tópico de comando: %s\n", topicoMqttComando);
+
+  // Monta o tópico MQTT de ACK do aerador
+  snprintf(topicoMqttAck, sizeof(topicoMqttAck),
+           "farm/%s/pond/%s/actuator/aerator/ack", FARM_ID, POND_ID);
+  Serial.printf("[MQTT] Tópico de ACK: %s\n", topicoMqttAck);
+
   // Configura o broker MQTT
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+  mqttClient.setCallback(aoReceberComandoMqtt);
   mqttClient.setBufferSize(512);  // Buffer suficiente para o JSON
 
   // Conecta ao WiFi

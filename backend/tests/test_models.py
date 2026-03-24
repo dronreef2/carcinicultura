@@ -16,6 +16,8 @@ from app.models import (
     UltimaLeitura,
     Viveiro,
     Alerta,
+    ComandoAtuadorRequest,
+    ComandoAtuador,
 )
 
 
@@ -197,3 +199,37 @@ class TestClassificacaoTemperatura:
     def test_faixa_critical_alto(self):
         assert classificar_temperatura(34.1) == "temp-critical"
         assert classificar_temperatura(40.0) == "temp-critical"
+
+
+# ─── Comando de atuador ───────────────────────────────────────────────────────
+
+class TestComandoAtuador:
+    def test_request_valido(self):
+        cmd = ComandoAtuadorRequest(command="on", source="manual")
+        assert cmd.command == "on"
+        assert cmd.source == "manual"
+
+    def test_request_pulse_com_duracao(self):
+        cmd = ComandoAtuadorRequest(command="pulse", source="auto", duration_s=30)
+        assert cmd.duration_s == 30
+
+    def test_request_duracao_invalida(self):
+        with pytest.raises(ValidationError):
+            ComandoAtuadorRequest(command="pulse", source="auto", duration_s=0)
+
+    def test_response_model(self):
+        ts = datetime.now(timezone.utc)
+        row = ComandoAtuador(
+            id=1,
+            command_id="4a2670aa-8cc8-4ef5-9706-e5a16d78e469",
+            pond_id="pond-01",
+            actuator_type="aerator",
+            command="on",
+            source="manual",
+            status="sent",
+            details="MQTT publish ok",
+            created_at=ts,
+        )
+        assert row.actuator_type == "aerator"
+        assert row.status == "sent"
+        assert row.command_id is not None

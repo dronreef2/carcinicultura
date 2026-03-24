@@ -73,10 +73,17 @@ async def criar_schema():
                 pond_id VARCHAR(50) NOT NULL,
                 device_id VARCHAR(50) NOT NULL,
                 temperature DECIMAL(5,2),
+                dissolved_oxygen DECIMAL(5,2),
                 PRIMARY KEY (id, timestamp)
             )
         """))
         logger.info("Tabela 'sensor_readings' criada/verificada.")
+
+        # Garante compatibilidade de schema em bancos existentes
+        await conn.execute(text("""
+            ALTER TABLE sensor_readings
+            ADD COLUMN IF NOT EXISTS dissolved_oxygen DECIMAL(5,2)
+        """))
 
         # Converte para hypertable do TimescaleDB (particionada por timestamp)
         # O migrate_data permite rodar mesmo se a tabela já tiver dados
@@ -144,7 +151,41 @@ async def criar_schema():
             VALUES ('*', 'temperature', 24.0, 22.0, 32.0, 34.0)
             ON CONFLICT (pond_id, parametro) DO NOTHING
         """))
+        await conn.execute(text("""
+            INSERT INTO alert_rules (pond_id, parametro, min_warning, min_critical, max_warning, max_critical)
+            VALUES ('*', 'dissolved_oxygen', 4.0, 3.0, NULL, NULL)
+            ON CONFLICT (pond_id, parametro) DO NOTHING
+        """))
         logger.info("Tabela 'alert_rules' e regras padrão criadas/verificadas.")
+
+        # Tabela de comandos para atuadores (ex.: aerador)
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS actuator_commands (
+                id BIGSERIAL PRIMARY KEY,
+                command_id VARCHAR(64),
+                pond_id VARCHAR(50) NOT NULL,
+                actuator_type VARCHAR(30) NOT NULL,
+                command VARCHAR(20) NOT NULL,
+                source VARCHAR(20) NOT NULL DEFAULT 'manual',
+                status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                details TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("""
+            ALTER TABLE actuator_commands
+            ADD COLUMN IF NOT EXISTS command_id VARCHAR(64)
+        """))
+        await conn.execute(text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_actuator_commands_command_id
+            ON actuator_commands (command_id)
+            WHERE command_id IS NOT NULL
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_actuator_commands_pond_created
+            ON actuator_commands (pond_id, created_at DESC)
+        """))
+        logger.info("Tabela 'actuator_commands' criada/verificada.")
 
     logger.info("Schema do banco de dados pronto!")
 

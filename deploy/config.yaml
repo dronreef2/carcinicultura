@@ -1,0 +1,18 @@
+tunnel: carcinicultura-iot
+credentials-file: /etc/cloudflared/creds.json
+
+# Ingress rules - rotear para os serviços
+ingress:
+  # Dashboard (porta 8501)
+  - hostname: carcinicultura-iot.trycloudflare.com
+    service: http://dashboard:8501
+    
+  # API com prefixo /api
+  - hostname: carcinicultura-iot.trycloudflare.com
+    path: ^/api/.*
+    service: http://backend:8000
+    
+  # Fallback para dashboard se nenhuma rota bater
+  - service: http://dashboard:8501
+
+no-autoupdate: true
